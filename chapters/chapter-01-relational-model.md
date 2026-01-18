@@ -2790,68 +2790,537 @@ SELECT * FROM R, S;
 
 **Why is this useful?** Alone, the Cartesian product generates meaningless data. But it's the foundation for joins. We'll often compute the Cartesian product and then filter with select to get meaningful results.
 
-### 1.6.7 Join (⋈)
+### 1.6.7 Join (⋈) - Combining Relations
 
-The **join** operator combines tuples from two relations based on a condition, typically matching values in common attributes.
+#### Motivation and Intuition
 
-**Syntax**: R ⋈ S (natural join) or R ⋈<sub>condition</sub> S (theta join)
+The join operator is perhaps the most important and powerful operation in relational algebra. It addresses a fundamental question: **how do we combine information from multiple relations based on their logical relationships?**
 
-**Natural join**: Automatically joins on attributes with the same name, removing duplicate columns.
+In the relational model, data is **normalized**—split across multiple tables to avoid redundancy. To answer meaningful questions, we must combine this distributed information. The join operator does exactly that.
 
-**Example**:
+**Real-World Analogies**:
+- **Matching records**: Finding all orders for a specific customer by matching customer_id values
+- **Combining datasets**: Merging employee information with department information based on department codes
+- **Connecting entities**: Linking albums to artists, students to courses, products to suppliers
+
+**Why Joins Matter**: Joins are where database systems spend most of their execution time. A typical query in a production system involves multiple joins. Understanding joins is essential for:
+- Writing correct queries
+- Understanding performance
+- Database design (normalization vs. denormalization trade-offs)
+
+#### The Problem Joins Solve
+
+Consider our music database:
 
 ```
-R:
-+-----+-----+
-| a_id| b_id|
-+-----+-----+
-| A1  | 100 |
-| A2  | 101 |
-| A3  | 102 |
-+-----+-----+
+Artist:
++---------------+------+---------+
+| name          | year | country |
++---------------+------+---------+
+| Wu-Tang Clan  | 1992 | USA     |
+| GZA           | 1991 | USA     |
++---------------+------+---------+
 
-S:
-+-----+-------+
-| b_id| value |
-+-----+-------+
-| 100 | X     |
-| 101 | Y     |
-+-----+-------+
-
-R ⋈ S (natural join on b_id):
-+-----+-----+-------+
-| a_id| b_id| value |
-+-----+-----+-------+
-| A1  | 100 | X     |
-| A2  | 101 | Y     |
-+-----+-----+-------+
+Album:
++------------------------+---------------+------+
+| title                  | artist        | year |
++------------------------+---------------+------+
+| Enter the 36 Chambers  | Wu-Tang Clan  | 1993 |
+| Liquid Swords          | GZA           | 1995 |
++------------------------+---------------+------+
 ```
 
-**How it works conceptually**:
-1. Compute R × S (Cartesian product)
-2. Filter: keep only tuples where `R.b_id = S.b_id`
-3. Remove duplicate `b_id` column
+**Question**: "Find all albums with their artist's country of origin."
 
-**SQL equivalents**:
+The answer requires information from **both** tables:
+- Album title and year come from Album
+- Country comes from Artist
+- They're connected via the artist name (Album.artist = Artist.name)
 
-Natural join (not recommended due to implicitness):
+The join operator combines these relations based on the relationship.
+
+#### Types of Joins
+
+There are several varieties of join, each serving different purposes:
+
+**1. Natural Join (⋈)**
+- Joins on attributes with the same name
+- Removes duplicate columns
+- Implicit, convenient but potentially dangerous
+
+**2. Theta Join (⋈<sub>θ</sub>)**
+- Joins based on an arbitrary condition θ (theta)
+- Most general form
+- Condition can be any predicate
+
+**3. Equi-Join**
+- A theta join where the condition is equality (=)
+- Most common type in practice
+- Example: R ⋈<sub>R.a = S.b</sub> S
+
+**4. Inner Join**
+- Returns only tuples that have matches in both relations
+- This is what we mean by "join" unless otherwise specified
+
+**5. Outer Joins** (extensions to basic relational algebra):
+- **Left Outer Join**: Includes all tuples from left relation, even without matches
+- **Right Outer Join**: Includes all tuples from right relation, even without matches
+- **Full Outer Join**: Includes all tuples from both relations
+- Missing values filled with NULL
+
+#### Formal Definition: Theta Join
+
+**Syntax**: R ⋈<sub>θ</sub> S
+
+Where:
+- R and S are relations
+- θ (theta) is a boolean condition involving attributes from R and S
+
+**Semantics**: R ⋈<sub>θ</sub> S returns all tuples formed by concatenating a tuple from R with a tuple from S, where the combined tuple satisfies condition θ.
+
+**Formally**:
+```
+R ⋈<sub>θ</sub> S = σ<sub>θ</sub>(R × S)
+```
+
+This says: compute the Cartesian product (pair every tuple in R with every tuple in S), then select only those combined tuples that satisfy θ.
+
+**Output Schema**: The output has all attributes from R and all attributes from S. If R has schema (A, B) and S has schema (C, D), the output has schema (A, B, C, D).
+
+**Cardinality**: 
+- Minimum: 0 (if no tuples satisfy θ)
+- Maximum: |R| × |S| (if all pairs satisfy θ, though this is rare)
+- Typical: Much less than |R| × |S|
+
+#### Natural Join
+
+**Syntax**: R ⋈ S
+
+**Semantics**: Natural join automatically:
+1. Identifies attributes with the same name in R and S
+2. Joins on equality of those attributes
+3. Removes duplicate columns from the result
+
+**Formally**, if R and S have common attributes C = {C₁, C₂, ..., Cₖ}:
+```
+R ⋈ S = π<sub>R-attributes ∪ S-attributes</sub>(σ<sub>R.C₁=S.C₁ ∧ R.C₂=S.C₂ ∧ ... ∧ R.Cₖ=S.Cₖ</sub>(R × S))
+```
+
+But only one copy of each common attribute appears in the output.
+
+#### Step-by-Step Join Example
+
+**Example: Natural Join**
+
+**Given Relations**:
+
+```
+R (Artist-Album mapping):
++------------+-----+
+| artist_id  | album_id |
++------------+----------+
+| A1         | 100      |
+| A2         | 101      |
+| A3         | 102      |
++------------+----------+
+
+S (Album Details):
++----------+------------------------+
+| album_id | title                  |
++----------+------------------------+
+| 100      | Enter the 36 Chambers  |
+| 101      | Liquid Swords          |
++----------+------------------------+
+```
+
+**Query**: R ⋈ S (natural join on album_id)
+
+**Step 1: Identify Common Attributes**
+- Common attribute: album_id
+
+**Step 2: Conceptually Compute Cartesian Product**
+
+R × S would produce 3 × 2 = 6 tuples:
+```
+| artist_id | R.album_id | S.album_id | title                  |
+|-----------|------------|------------|------------------------|
+| A1        | 100        | 100        | Enter the 36 Chambers  |
+| A1        | 100        | 101        | Liquid Swords          |
+| A2        | 101        | 100        | Enter the 36 Chambers  |
+| A2        | 101        | 101        | Liquid Swords          |
+| A3        | 102        | 100        | Enter the 36 Chambers  |
+| A3        | 102        | 101        | Liquid Swords          |
+```
+
+**Step 3: Filter Where album_id Matches**
+
+Keep only rows where R.album_id = S.album_id:
+```
+| artist_id | R.album_id | S.album_id | title                  |
+|-----------|------------|------------|------------------------|
+| A1        | 100        | 100        | Enter the 36 Chambers  | ✓
+| A2        | 101        | 101        | Liquid Swords          | ✓
+```
+
+**Step 4: Remove Duplicate album_id Column**
+
+Keep only one album_id column:
+```
+| artist_id | album_id | title                  |
+|-----------|----------|------------------------|
+| A1        | 100      | Enter the 36 Chambers  |
+| A2        | 101      | Liquid Swords          |
+```
+
+**Final Result**:
+```
++------------+----------+------------------------+
+| artist_id  | album_id | title                  |
++------------+----------+------------------------+
+| A1         | 100      | Enter the 36 Chambers  |
+| A2         | 101      | Liquid Swords          |
++------------+----------+------------------------+
+```
+
+**Observations**:
+- **A3** with album_id 102 is **excluded** because album 102 doesn't exist in S (no match)
+- This is an **inner join**—only tuples with matches in both relations appear
+
+#### Theta Join Example
+
+**Given Relations**:
+
+```
+Employee:
++------+--------+--------+
+| id   | name   | salary |
++------+--------+--------+
+| E1   | Alice  | 60000  |
+| E2   | Bob    | 50000  |
+| E3   | Carol  | 70000  |
++------+--------+--------+
+
+Department:
++------------+---------------+
+| dept       | min_salary    |
++------------+---------------+
+| Sales      | 55000         |
+| Engineering| 65000         |
++------------+---------------+
+```
+
+**Query**: Employee ⋈<sub>salary ≥ min_salary</sub> Department
+
+**Interpretation**: Find which departments each employee qualifies for based on salary.
+
+**Step 1: Cartesian Product**
+
+3 employees × 2 departments = 6 combinations
+
+**Step 2: Filter by Condition**
+
+```
+| id | name  | salary | dept        | min_salary | salary ≥ min_salary? |
+|----|-------|--------|-------------|------------|----------------------|
+| E1 | Alice | 60000  | Sales       | 55000      | 60000 ≥ 55000 = YES  | ✓
+| E1 | Alice | 60000  | Engineering | 65000      | 60000 ≥ 65000 = NO   | ✗
+| E2 | Bob   | 50000  | Sales       | 55000      | 50000 ≥ 55000 = NO   | ✗
+| E2 | Bob   | 50000  | Engineering | 65000      | 50000 ≥ 65000 = NO   | ✗
+| E3 | Carol | 70000  | Sales       | 55000      | 70000 ≥ 55000 = YES  | ✓
+| E3 | Carol | 70000  | Engineering | 65000      | 70000 ≥ 65000 = YES  | ✓
+```
+
+**Result**:
+```
++------+--------+--------+-------------+------------+
+| id   | name   | salary | dept        | min_salary |
++------+--------+--------+-------------+------------+
+| E1   | Alice  | 60000  | Sales       | 55000      |
+| E3   | Carol  | 70000  | Sales       | 55000      |
+| E3   | Carol  | 70000  | Engineering | 65000      |
++------+--------+--------+-------------+------------+
+```
+
+**Observations**:
+- Alice qualifies for Sales (60k ≥ 55k) but not Engineering (60k < 65k)
+- Bob qualifies for neither department
+- Carol qualifies for both departments
+
+This shows how theta joins can express complex conditions beyond simple equality.
+
+#### Join Implementation Strategies
+
+The conceptual definition (Cartesian product + selection) would be **catastrophically expensive** for large relations:
+
+```
+|R| = 1,000,000 tuples
+|S| = 1,000,000 tuples
+|R × S| = 1,000,000,000,000 tuples (1 trillion!)
+```
+
+Even if each tuple is 100 bytes, this is 100 TB of intermediate data. Completely impractical.
+
+Real database systems use sophisticated algorithms that avoid materializing the full Cartesian product:
+
+**1. Nested Loop Join**
+
+```
+for each tuple r in R:
+    for each tuple s in S:
+        if r and s satisfy the join condition:
+            output combined tuple
+```
+
+**Cost**: O(|R| × |S|) tuple comparisons
+- Still expensive but doesn't materialize Cartesian product
+- Can be improved with indexes
+
+**2. Index Nested Loop Join**
+
+```
+for each tuple r in R:
+    use index on S to find matching tuples
+    output combined tuples
+```
+
+**Cost**: O(|R| × log|S|) if S has an index on the join attribute
+- Much better if S is indexed
+- Typical speedup: 100x-1000x
+
+**3. Hash Join**
+
+```
+Build phase:
+    Build hash table on R (smaller relation)
+Probe phase:
+    For each tuple s in S:
+        Probe hash table for matching R tuples
+        Output matches
+```
+
+**Cost**: O(|R| + |S|)—linear!
+- Very fast for equi-joins
+- Requires memory for hash table
+- Most efficient for large equi-joins
+
+**4. Sort-Merge Join**
+
+```
+Sort R on join attribute
+Sort S on join attribute
+Merge sorted lists, outputting matches
+```
+
+**Cost**: O(|R| log|R| + |S| log|S|) for sorting, O(|R| + |S|) for merging
+- Efficient when relations are already sorted
+- Works well when output must be sorted anyway
+
+**Why This Matters**: Understanding join algorithms explains:
+- Why indexes are crucial for join performance
+- Why large joins can be slow
+- How to optimize queries by choosing join order
+- Why database systems need sophisticated query optimizers
+
+#### Translation to SQL
+
+**Natural Join** (not recommended):
 ```sql
 SELECT * FROM R NATURAL JOIN S;
 ```
+**Problem**: Implicit. If schemas change and a new common attribute is added, the join behavior silently changes.
 
-Explicit join using `USING` clause:
+**Equi-Join with USING** (better):
 ```sql
-SELECT * FROM R JOIN S USING (b_id);
+SELECT * FROM R JOIN S USING (album_id);
+```
+**Advantage**: Explicit about which attribute to join on.
+
+**Equi-Join with ON** (best practice):
+```sql
+SELECT * FROM R JOIN S ON R.album_id = S.album_id;
+```
+**Advantage**: Most explicit. No ambiguity. Works even if attribute names differ.
+
+**Theta Join**:
+```sql
+SELECT * FROM Employee e JOIN Department d ON e.salary >= d.min_salary;
 ```
 
-Explicit join with `ON` clause (most recommended):
+**Multiple Joins**:
 ```sql
-SELECT * FROM R JOIN S ON R.b_id = S.b_id;
+SELECT * 
+FROM Artist a
+JOIN Album al ON a.name = al.artist
+JOIN Track t ON al.album_id = t.album_id
+WHERE a.country = 'USA';
 ```
 
-The `ON` clause is most explicit and prevents errors if schemas change.
+This joins three tables: Artist → Album → Track.
 
-**Joins are where database systems spend most of their time.** Optimizing joins is critical. A naïve implementation (compute full Cartesian product, then filter) is prohibitively expensive for large relations. Modern database systems use sophisticated join algorithms (hash join, sort-merge join, index nested loop join) covered in later chapters.
+#### Outer Joins (Extension to Basic Relational Algebra)
+
+**Problem with Inner Join**: Tuples without matches are discarded.
+
+**Example**:
+```
+Artist:
++---------------+
+| name          |
++---------------+
+| Wu-Tang Clan  |
+| GZA           |
+| Raekwon       |  ← No albums in database
++---------------+
+
+Album:
++------------------------+---------------+
+| title                  | artist        |
++------------------------+---------------+
+| Enter the 36 Chambers  | Wu-Tang Clan  |
+| Liquid Swords          | GZA           |
++------------------------+---------------+
+
+Artist ⋈ Album (inner join):
++---------------+------------------------+
+| name          | title                  |
++---------------+------------------------+
+| Wu-Tang Clan  | Enter the 36 Chambers  |
+| GZA           | Liquid Swords          |
++---------------+------------------------+
+```
+
+**Raekwon is missing!** Inner join excludes artists without albums.
+
+**Left Outer Join** (Artist ⟕ Album):
+```
++---------------+------------------------+
+| name          | title                  |
++---------------+------------------------+
+| Wu-Tang Clan  | Enter the 36 Chambers  |
+| GZA           | Liquid Swords          |
+| Raekwon       | NULL                   |  ← Included with NULL
++---------------+------------------------+
+```
+
+**SQL**:
+```sql
+SELECT * FROM Artist a LEFT JOIN Album al ON a.name = al.artist;
+```
+
+**Right Outer Join** (Artist ⟖ Album):
+Includes all albums, even if artist is missing (rare in practice due to foreign keys).
+
+**Full Outer Join** (Artist ⟗ Album):
+Includes all artists and all albums, with NULLs where there's no match.
+
+#### Common Pitfalls
+
+**Pitfall 1: Cartesian Product Disguised as Join**
+
+**Wrong (missing join condition)**:
+```sql
+SELECT * FROM R, S;  -- Cartesian product!
+```
+
+This produces |R| × |S| rows, almost never what you want.
+
+**Correct**:
+```sql
+SELECT * FROM R JOIN S ON R.id = S.id;
+```
+
+**Pitfall 2: Natural Join with Unexpected Common Attributes**
+
+```sql
+SELECT * FROM Orders NATURAL JOIN Products;
+```
+
+If both tables have an `id` column (order ID vs. product ID), natural join will incorrectly join on both `id` columns, producing wrong results.
+
+**Fix**: Use explicit ON clause.
+
+**Pitfall 3: Many-to-Many Joins Producing Duplicates**
+
+If the join condition matches multiple tuples, you get all combinations:
+
+```
+Authors:
++---------+
+| book_id |
++---------+
+| B1      |
+| B1      |  ← Book B1 has 2 authors
++---------+
+
+Books:
++---------+-------+
+| book_id | title |
++---------+-------+
+| B1      | DB101 |
++---------+-------+
+
+Authors ⋈ Books:
++---------+-------+
+| book_id | title |
++---------+-------+
+| B1      | DB101 |
+| B1      | DB101 |  ← Duplicated
++---------+-------+
+```
+
+This is correct behavior but can be surprising. If you want unique books, project appropriately.
+
+**Pitfall 4: Join Order Affects Performance (but Not Results)**
+
+These are semantically equivalent but may have different performance:
+
+```sql
+-- Option A
+SELECT * FROM R JOIN S ON ... JOIN T ON ...;
+
+-- Option B
+SELECT * FROM R JOIN T ON ... JOIN S ON ...;
+```
+
+The query optimizer tries different join orders and chooses the best, but understanding join selectivity helps you write efficient queries.
+
+#### Properties of Join
+
+**Commutativity** (for natural join and equi-join):
+```
+R ⋈ S = S ⋈ R
+```
+The order of relations doesn't matter (though attribute order in the output may differ).
+
+**Associativity**:
+```
+(R ⋈ S) ⋈ T = R ⋈ (S ⋈ T)
+```
+You can join in any grouping.
+
+**Distributivity over Union**:
+```
+R ⋈ (S ∪ T) = (R ⋈ S) ∪ (R ⋈ T)
+```
+
+These properties enable query optimization: the optimizer can reorder and regroup joins to find the most efficient execution plan.
+
+#### Real-World Importance
+
+Joins are the heart of relational databases:
+
+- **Most queries involve joins**: Production systems routinely join 5-10 tables
+- **Performance-critical**: Joins are typically the most expensive operation
+- **Schema design impact**: Normalization creates more tables, requiring more joins
+- **Index design**: Indexes on foreign keys dramatically improve join performance
+
+**Rule of Thumb**: If a query is slow, it's often because of joins. Optimizing joins (indexes, join order, denormalization) is a primary database tuning strategy.
+
+**Advanced Topic Preview**: Later chapters cover:
+- Query optimization: choosing join order and algorithms
+- Join algorithms in depth: hash join, sort-merge join
+- Parallel joins: distributing joins across multiple machines
+- Join hints: telling the optimizer which strategy to use
 
 ### 1.6.8 Additional Operators
 
