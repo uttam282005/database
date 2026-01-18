@@ -2089,26 +2089,172 @@ This is standard mathematical notation for defining sets by a property.
 
 **Why This Matters**: The mathematical foundation enables formal reasoning. We can prove properties about queries, show that two queries are equivalent, and systematically optimize query execution—all because relational algebra has a rigorous mathematical basis.
 
-### 1.6.2 Projection (π)
+### 1.6.2 Projection (π) - Selecting Attributes
 
-The **projection** operator selects specific attributes (columns).
+#### Motivation and Intuition
 
-**Syntax**: π<sub>attribute_list</sub>(R)
+The projection operator addresses the complementary problem to selection: while select filters **rows** (tuples), projection selects **columns** (attributes). This operation answers questions like "What are all the unique values of X?" or "I only need these specific attributes, not the entire record."
 
-**Semantics**: Returns tuples containing only the specified attributes. Duplicates are removed (since the output is a set).
+**Real-World Analogies**:
+- **Privacy/Redaction**: Displaying a customer list with names and emails, but hiding credit card numbers and addresses. You're projecting onto a subset of attributes.
+- **Summarization**: A report showing only product names and prices, omitting internal SKUs, warehouse locations, and supplier details.
+- **Dimensionality reduction**: In data analysis, selecting relevant features while discarding irrelevant ones.
 
-**Example**: Get all artist names.
+**Why This Operation Exists**: In file-based systems, if you wanted just some columns, you'd write code to extract them:
 
-π<sub>name</sub>(Artist)
-
-**SQL equivalent**:
-```sql
-SELECT name FROM Artist;
+```python
+names = []
+for record in all_records:
+    names.append(record['name'])  # Extract just the name
 ```
 
-**Detailed example**:
+For multiple columns:
+```python
+results = []
+for record in all_records:
+    results.append({
+        'name': record['name'],
+        'year': record['year']
+    })
+```
+
+The projection operator abstracts this: specify which attributes you want, and the database extracts them.
+
+#### Formal Definition
+
+**Syntax**: π<sub>A₁, A₂, ..., Aₖ</sub>(R)
+
+Where:
+- π is the projection operator (lowercase Greek letter pi)
+- A₁, A₂, ..., Aₖ are attributes from R's schema
+- R is a relation
+
+**Semantics**: Given a relation R and a list of attributes A₁, A₂, ..., Aₖ (where each Aᵢ is an attribute of R), π<sub>A₁, A₂, ..., Aₖ</sub>(R) returns a new relation containing:
+1. Only the specified attributes (columns)
+2. All tuples from R, but with non-specified attributes removed
+3. **Duplicates eliminated** (since the result is a set)
+
+**Formally**:
+```
+π<sub>A₁, A₂, ..., Aₖ</sub>(R) = {⟨t.A₁, t.A₂, ..., t.Aₖ⟩ | t ∈ R}
+```
+
+Where t.Aᵢ means "the value of attribute Aᵢ in tuple t."
+
+**Output Schema**: The output relation has a schema with only the projected attributes. If R has schema (A, B, C, D) and we compute π<sub>A, C</sub>(R), the output has schema (A, C).
+
+**Cardinality**: The output has cardinality 0 ≤ |π<sub>A</sub>(R)| ≤ |R|. If the projected attributes form a superkey (uniquely identify tuples), no duplicates exist, so |π<sub>A</sub>(R)| = |R|. Otherwise, duplicates are removed, so |π<sub>A</sub>(R)| < |R|.
+
+#### The Duplicate Elimination Issue
+
+This is a subtle but important point. Projection removes duplicates because **relations are sets**, and sets don't have duplicates.
+
+**Example**:
 
 Input (Artist):
+```
++---------------+------+---------+
+| name          | year | country |
++---------------+------+---------+
+| Wu-Tang Clan  | 1992 | USA     |
+| GZA           | 1991 | USA     |
+| Notorious BIG | 1992 | USA     |
+| Oasis         | 1991 | UK      |
++---------------+------+---------+
+```
+
+**Project on {year}**:
+
+Before duplicate elimination:
+```
+| year |
+|------|
+| 1992 |
+| 1991 |
+| 1992 |  ← Duplicate
+| 1991 |  ← Duplicate
+```
+
+After duplicate elimination (final result):
+```
+| year |
+|------|
+| 1991 |
+| 1992 |
+```
+
+**Why This Matters**: Duplicate elimination can be expensive—it requires sorting or hashing. In pure relational algebra, it's mandatory. In SQL, it's optional (and off by default for performance):
+
+**Relational Algebra**:
+```
+π<sub>year</sub>(Artist)  → {1991, 1992}  (duplicates removed)
+```
+
+**SQL without DISTINCT** (keeps duplicates):
+```sql
+SELECT year FROM Artist;  → [1992, 1991, 1992, 1991]
+```
+
+**SQL with DISTINCT** (removes duplicates):
+```sql
+SELECT DISTINCT year FROM Artist;  → [1991, 1992]
+```
+
+This is one of SQL's pragmatic departures from pure relational algebra.
+
+#### Properties of Projection
+
+**Property 1: Idempotence**
+
+Projecting on the same attributes multiple times is equivalent to projecting once:
+
+```
+π<sub>A</sub>(π<sub>A</sub>(R)) = π<sub>A</sub>(R)
+```
+
+**Intuition**: If you select certain columns, then select those same columns again, you get the same result.
+
+**Property 2: Cascading (Order Matters)**
+
+Unlike select (where order doesn't matter), projection order **does** matter—but in a specific way:
+
+```
+π<sub>A</sub>(π<sub>A, B</sub>(R)) = π<sub>A</sub>(R)
+```
+
+You can project onto a subset of previously projected attributes. You **cannot** project onto attributes you've already discarded:
+
+```
+π<sub>A, B</sub>(π<sub>A</sub>(R))  is INVALID  (B was discarded, can't recover it)
+```
+
+**Property 3: Commutes with Selection (Sometimes)**
+
+Projection and selection can sometimes be reordered:
+
+```
+π<sub>A</sub>(σ<sub>P</sub>(R)) = σ<sub>P</sub>(π<sub>A</sub>(R))  IF P only references attributes in A
+```
+
+**Example**:
+```
+π<sub>name</sub>(σ<sub>name='GZA'</sub>(Artist)) = σ<sub>name='GZA'</sub>(π<sub>name</sub>(Artist))
+```
+Both work because the predicate (name='GZA') only uses the projected attribute (name).
+
+**Counter-example**:
+```
+π<sub>name</sub>(σ<sub>country='USA'</sub>(Artist)) ≠ σ<sub>country='USA'</sub>(π<sub>name</sub>(Artist))  INVALID
+```
+The right side is invalid because after projecting onto {name}, the attribute country no longer exists, so we can't filter by it.
+
+**Optimization Implication**: The optimizer can sometimes push projection down (apply it earlier) to reduce intermediate result size. But it must preserve attributes needed for later operations.
+
+#### Step-by-Step Examples
+
+**Example 1: Project Single Attribute**
+
+**Given (Artist)**:
 ```
 +---------------+------+---------+
 | name          | year | country |
@@ -2119,7 +2265,16 @@ Input (Artist):
 +---------------+------+---------+
 ```
 
-Output:
+**Query**: π<sub>name</sub>(Artist)
+
+**Step 1**: For each tuple, extract only the `name` attribute
+- Tuple 1: 'Wu-Tang Clan'
+- Tuple 2: 'GZA'
+- Tuple 3: 'Oasis'
+
+**Step 2**: Remove duplicates (none in this case)
+
+**Result**:
 ```
 +---------------+
 | name          |
@@ -2130,11 +2285,358 @@ Output:
 +---------------+
 ```
 
-**Important**: If we projected on `year`, duplicates would be eliminated:
+Schema changed from (name, year, country) to just (name). Cardinality unchanged (3 tuples).
 
-π<sub>year</sub>(Artist) → {1991, 1992}
+**Example 2: Project Multiple Attributes**
 
-This differs from SQL's default behavior. In SQL, `SELECT year FROM Artist` retains duplicates. You must write `SELECT DISTINCT year FROM Artist` to eliminate them. The relational model's default is to remove duplicates; SQL's default is to keep them for efficiency.
+**Query**: π<sub>name, country</sub>(Artist)
+
+**Step 1**: For each tuple, extract `name` and `country`
+- Tuple 1: ('Wu-Tang Clan', 'USA')
+- Tuple 2: ('GZA', 'USA')
+- Tuple 3: ('Oasis', 'UK')
+
+**Step 2**: Remove duplicates (none)
+
+**Result**:
+```
++---------------+---------+
+| name          | country |
++---------------+---------+
+| Wu-Tang Clan  | USA     |
+| GZA           | USA     |
+| Oasis         | UK      |
++---------------+---------+
+```
+
+Schema changed from (name, year, country) to (name, country). The `year` attribute is gone.
+
+**Example 3: Project with Duplicate Elimination**
+
+**Given (Artist)**:
+```
++---------------+------+---------+
+| name          | year | country |
++---------------+------+---------+
+| Wu-Tang Clan  | 1992 | USA     |
+| GZA           | 1991 | USA     |
+| Notorious BIG | 1992 | USA     |
+| Oasis         | 1991 | UK      |
+| Radiohead     | 1985 | UK      |
++---------------+------+---------+
+```
+
+**Query**: π<sub>country</sub>(Artist)
+
+**Step 1**: Extract country for each tuple
+- 'USA', 'USA', 'USA', 'UK', 'UK'
+
+**Step 2**: Remove duplicates
+- {'USA', 'UK'}
+
+**Result**:
+```
++---------+
+| country |
++---------+
+| USA     |
+| UK      |
++---------+
+```
+
+Cardinality reduced from 5 to 2 due to duplicate elimination.
+
+**Example 4: Project on Non-Key Attribute**
+
+**Query**: π<sub>year</sub>(Artist)
+
+**Step 1**: Extract year
+- 1992, 1991, 1992, 1991, 1985
+
+**Step 2**: Remove duplicates
+- {1985, 1991, 1992}
+
+**Result**:
+```
++------+
+| year |
++------+
+| 1985 |
+| 1991 |
+| 1992 |
++------+
+```
+
+Cardinality reduced from 5 to 3.
+
+#### Combining Projection and Selection
+
+Projection and selection are often used together: filter rows, then select columns.
+
+**Example**: Find names of USA artists
+
+**Query**: π<sub>name</sub>(σ<sub>country='USA'</sub>(Artist))
+
+**Step-by-step**:
+
+1. **Apply selection**: σ<sub>country='USA'</sub>(Artist)
+   ```
+   +---------------+------+---------+
+   | name          | year | country |
+   +---------------+------+---------+
+   | Wu-Tang Clan  | 1992 | USA     |
+   | GZA           | 1991 | USA     |
+   | Notorious BIG | 1992 | USA     |
+   +---------------+------+---------+
+   ```
+
+2. **Apply projection**: π<sub>name</sub>(result)
+   ```
+   +---------------+
+   | name          |
+   +---------------+
+   | Wu-Tang Clan  |
+   | GZA           |
+   | Notorious BIG |
+   +---------------+
+   ```
+
+**SQL Equivalent**:
+```sql
+SELECT name FROM Artist WHERE country = 'USA';
+```
+
+Notice how natural this is in SQL—the SELECT clause is projection, the WHERE clause is selection.
+
+#### Translation to SQL
+
+**Relational Algebra**:
+```
+π<sub>name</sub>(Artist)
+```
+
+**SQL** (without DISTINCT, keeps duplicates):
+```sql
+SELECT name FROM Artist;
+```
+
+**SQL** (with DISTINCT, removes duplicates like relational algebra):
+```sql
+SELECT DISTINCT name FROM Artist;
+```
+
+**Multiple Attributes**:
+
+**Relational Algebra**:
+```
+π<sub>name, year</sub>(Artist)
+```
+
+**SQL**:
+```sql
+SELECT DISTINCT name, year FROM Artist;
+```
+
+**With Selection**:
+
+**Relational Algebra**:
+```
+π<sub>name, year</sub>(σ<sub>country='USA'</sub>(Artist))
+```
+
+**SQL**:
+```sql
+SELECT DISTINCT name, year FROM Artist WHERE country = 'USA';
+```
+
+#### Edge Cases
+
+**Edge Case 1: Project All Attributes**
+
+If you project all attributes, the result is identical to the input:
+
+```
+π<sub>name, year, country</sub>(Artist) = Artist
+```
+
+This is trivial but legal.
+
+**Edge Case 2: Project on Primary Key**
+
+If you project on attributes that form a superkey (like the primary key), no duplicates can exist:
+
+```
+π<sub>name</sub>(Artist)  where name is the primary key → cardinality unchanged
+```
+
+**Edge Case 3: Empty Relation**
+
+Projecting an empty relation produces an empty relation with the projected schema:
+
+```
+π<sub>name</sub>(∅) = ∅  (but with schema containing just 'name')
+```
+
+**Edge Case 4: Project Zero Attributes**
+
+What if you project onto zero attributes? Mathematically:
+
+```
+π<sub>∅</sub>(R) = {⟨⟩} if R is non-empty, ∅ if R is empty
+```
+
+This produces a relation with:
+- Zero attributes
+- One tuple (the empty tuple) if R had any tuples
+- Zero tuples if R was empty
+
+This is bizarre but theoretically valid. It's rarely useful in practice. SQL doesn't support it.
+
+#### Performance Implications
+
+**Without Duplicate Elimination** (SQL default):
+- Cost: O(n) - one pass through the data
+- Very fast - just extract columns
+
+**With Duplicate Elimination** (relational algebra, SQL DISTINCT):
+- Cost: O(n log n) with sorting, or O(n) with hashing
+- More expensive - must identify and remove duplicates
+
+**Methods for Duplicate Elimination**:
+
+1. **Sorting**: Sort the projected tuples, then scan and eliminate adjacent duplicates
+   - Cost: O(n log n)
+   - Works for any data type (if comparable)
+
+2. **Hashing**: Build a hash table, add each tuple, hash collisions reveal duplicates
+   - Cost: O(n) expected, O(n²) worst case
+   - Requires enough memory for the hash table
+
+3. **Index Scan**: If an index exists on the projected attributes, scan the index (already sorted)
+   - Cost: O(m) where m = number of distinct values
+   - Very fast if index exists
+
+**Example**: For 1 million artists projected onto country:
+- Without DISTINCT: 1 million rows returned (fast)
+- With DISTINCT: ~200 unique countries returned (requires sorting/hashing)
+
+**SQL Best Practice**: Only use DISTINCT when necessary. It's more expensive, and often duplicates don't matter (or are handled elsewhere).
+
+#### Common Pitfalls
+
+**Pitfall 1: Projecting After Filtering on Discarded Attributes**
+
+**Problem**: You cannot filter on attributes after you've projected them away.
+
+**Wrong Order**:
+```
+σ<sub>country='USA'</sub>(π<sub>name, year</sub>(Artist))  INVALID
+```
+
+After projecting onto {name, year}, the attribute `country` no longer exists.
+
+**Correct Order**:
+```
+π<sub>name, year</sub>(σ<sub>country='USA'</sub>(Artist))  VALID
+```
+
+Filter first (while `country` still exists), then project.
+
+**Pitfall 2: Assuming Projection Preserves Cardinality**
+
+**Problem**: Projection on non-key attributes reduces cardinality due to duplicate elimination.
+
+```
+π<sub>country</sub>(Artist)  has fewer tuples than Artist
+```
+
+Don't assume output size equals input size.
+
+**Pitfall 3: SQL DISTINCT on Multiple Columns**
+
+**Problem**: DISTINCT applies to the **entire row**, not individual columns.
+
+```sql
+SELECT DISTINCT year, country FROM Artist;
+```
+
+This returns distinct (year, country) **pairs**, not distinct years and distinct countries separately.
+
+If you want distinct years and distinct countries, you need two queries:
+
+```sql
+SELECT DISTINCT year FROM Artist;
+SELECT DISTINCT country FROM Artist;
+```
+
+**Pitfall 4: Forgetting DISTINCT When Translating from Relational Algebra**
+
+Relational algebra projection **always** removes duplicates. SQL SELECT **does not** (by default).
+
+**Relational Algebra**:
+```
+π<sub>year</sub>(Artist)  → {1991, 1992}
+```
+
+**SQL Equivalent**:
+```sql
+SELECT DISTINCT year FROM Artist;  → [1991, 1992]
+```
+
+**SQL Without DISTINCT** (not equivalent):
+```sql
+SELECT year FROM Artist;  → [1992, 1991, 1992, 1991, ...]
+```
+
+#### Relationship to Other Concepts
+
+**Projection in Linear Algebra**:
+
+In mathematics, "projection" means casting a vector onto a subspace. Database projection is analogous: we're "casting" tuples onto a subset of attributes.
+
+**Column Selection in DataFrames**:
+
+In data analysis libraries (Pandas, R), projection is column selection:
+
+```python
+# Pandas (Python)
+df[['name', 'year']]  # Project onto name and year columns
+
+# SQL
+SELECT name, year FROM Artist;
+```
+
+**Vertical Partitioning**:
+
+In database design, **vertical partitioning** splits a table into multiple tables by projecting onto different attribute sets:
+
+Original:
+```
+Artist(name, year, country, bio, discography, awards)
+```
+
+Vertically partitioned:
+```
+Artist_Core(name, year, country)         ← π<sub>name, year, country</sub>(Artist)
+Artist_Extended(name, bio, discography, awards)  ← π<sub>name, bio, discography, awards</sub>(Artist)
+```
+
+This can improve performance (smaller tables, less I/O) at the cost of requiring joins to reconstruct full records.
+
+**SELECT Clause Correspondence**:
+
+The SQL SELECT clause directly corresponds to relational algebra projection:
+
+```sql
+SELECT A, B, C FROM R WHERE P;
+```
+
+This is:
+```
+π<sub>A, B, C</sub>(σ<sub>P</sub>(R))
+```
+
+The FROM clause specifies the relation, WHERE is selection, SELECT is projection.
 
 ### 1.6.3 Union (∪)
 
