@@ -1386,59 +1386,708 @@ This separation allows database administrators to optimize storage and access pa
 
 ## 1.6 Relational Algebra
 
-**Relational algebra** is a procedural query language that operates on relations and produces relations as output. It serves as:
+### Motivation and Purpose
 
-- The theoretical foundation for query languages like SQL
-- A framework for query optimization (rewriting queries for better performance)
-- A formal specification for what queries *mean*
+**Relational algebra** is a formal query language that operates on relations and produces relations as output. But why do we need it when SQL already exists for querying databases? Understanding relational algebra's purpose requires understanding its role in database systems.
 
-Ted Codd defined relational algebra in his original 1970 paper. While Codd used mathematical notation, the underlying concepts are straightforward.
+**Three Critical Roles**:
 
-### 1.6.1 Select (σ)
+1. **Theoretical Foundation**: Relational algebra is the mathematical basis for SQL and other query languages. It provides precise semantics—a formal definition of what queries mean. Without this foundation, we couldn't reason about query correctness or prove that two queries are equivalent.
 
-The **select** operator filters tuples based on a predicate.
+2. **Query Optimization Framework**: Database query optimizers internally convert SQL to relational algebra, apply algebraic transformation rules to rewrite expressions into more efficient forms, then execute the optimized plan. The properties of relational algebra (commutativity, associativity, distributivity) enable systematic optimization.
+
+3. **Formal Reasoning Tool**: Relational algebra enables us to prove properties about queries (equivalence, correctness, completeness) and reason about their behavior mathematically. This is essential for database research and advanced query processing.
+
+### Why "Algebra"?
+
+The term "algebra" here has the same meaning as in high school algebra: a set of objects, operations on those objects, and rules for manipulating expressions.
+
+**In high school algebra**:
+- **Objects**: numbers (3, 5, -2, π, √2)
+- **Operations**: +, -, ×, ÷, exponentiation
+- **Properties**: commutative (a + b = b + a), associative ((a + b) + c = a + (b + c)), distributive (a × (b + c) = a × b + a × c)
+- **Expressions**: 3x + 5 = 14 can be manipulated using algebraic rules
+
+**In relational algebra**:
+- **Objects**: relations (tables containing tuples)
+- **Operations**: σ (select), π (project), ⋈ (join), ∪ (union), ∩ (intersection), − (difference), × (Cartesian product)
+- **Properties**: same kinds of algebraic properties (commutativity, associativity, etc.)
+- **Expressions**: π<sub>name</sub>(σ<sub>country='USA'</sub>(Artist)) can be manipulated using algebraic rules
+
+**The Closure Property**: Crucially, relational algebra has the **closure property**: applying an operation to relations produces a relation. This means we can **compose operations**:
+
+```
+Result = π<sub>name</sub>(σ<sub>country='USA'</sub>(Artist))
+```
+
+The inner operation σ<sub>country='USA'</sub>(Artist) produces a relation (USA artists), which becomes the input to π<sub>name</sub> (extract names). This composability is extraordinarily powerful—complex queries are built by combining simple operations.
+
+**Why This Matters**: Closure enables **algebraic reasoning**. Just as in algebra you can rewrite 3(x + 2) as 3x + 6, in relational algebra you can rewrite queries using equivalence rules. The query optimizer uses these rules to find efficient execution strategies.
+
+### Procedural vs. Declarative
+
+Relational algebra is **procedural**: you specify a sequence of operations (an execution plan) to compute the result. You tell the system *how* to compute what you want.
+
+SQL is **declarative**: you specify *what* result you want, not *how* to compute it. You describe the desired output, and the system figures out how to produce it.
+
+**Example - Finding USA Artists' Names**:
+
+**Relational Algebra** (procedural):
+```
+π<sub>name</sub>(σ<sub>country='USA'</sub>(Artist))
+```
+This says: "**First**, filter Artist to keep only USA artists. **Then**, project the name column from the filtered result."
+
+The order of operations is explicit: filter first, then project.
+
+**SQL** (declarative):
+```sql
+SELECT name FROM Artist WHERE country = 'USA';
+```
+This says: "Give me names from Artist where country is USA." It doesn't specify:
+- Whether to filter first or project first
+- What indexes to use (if any)
+- What algorithm to use for filtering
+- How to parallelize the operation
+
+**The Query Optimizer's Job**: The DBMS query optimizer:
+
+1. **Parses** the SQL into an internal representation
+2. **Converts** it to relational algebra
+3. **Generates** multiple equivalent relational algebra expressions using transformation rules
+4. **Estimates** the cost of each alternative (using statistics about data distribution, indexes, etc.)
+5. **Selects** the cheapest plan
+6. **Executes** the chosen plan
+
+For our simple query, the optimizer might consider:
+
+**Plan A** (filter then project):
+```
+π<sub>name</sub>(σ<sub>country='USA'</sub>(Artist))
+```
+- Cost: Scan all artists (expensive if table is large), filter, then project
+
+**Plan B** (use index on country):
+```
+π<sub>name</sub>(Index_Scan<sub>country='USA'</sub>(Artist))
+```
+- Cost: Index seek (cheap), retrieve matching records, project
+
+If an index on `country` exists, Plan B is typically much faster (potentially 100x-1000x).
+
+**Why Declarative is Powerful**: With declarative SQL:
+- You write queries once, and they work regardless of physical schema
+- As indexes are added or removed, the optimizer automatically adjusts
+- Query performance improves over time as optimizers get smarter, without changing application code
+
+This is **physical data independence** in action.
+
+### The Eight Fundamental Operators
+
+Ted Codd defined eight fundamental operators in his 1970 paper, divided into two categories:
+
+**Set Operations** (borrowed from mathematical set theory):
+1. **Union** (∪): Combine tuples from two relations
+2. **Intersection** (∩): Find tuples present in both relations
+3. **Difference** (−): Find tuples in one relation but not another
+4. **Cartesian Product** (×): Pair every tuple from one relation with every tuple from another
+
+**Relational-Specific Operations**:
+5. **Select** (σ): Filter tuples (rows) based on a condition
+6. **Project** (π): Select specific attributes (columns)
+7. **Rename** (ρ): Rename relations or attributes
+8. **Join** (⋈): Combine tuples from two relations based on related attributes
+
+These eight operators are **complete**: any query that can be expressed in relational algebra can be built from these primitives. Later extensions added aggregation, grouping, sorting, and other operations for convenience, but these eight form the theoretical core.
+
+**Minimality**: These operators are not minimal—some can be derived from others. For example:
+- Intersection can be derived: R ∩ S = R − (R − S)
+- Join can be derived: R ⋈<sub>C</sub> S = σ<sub>C</sub>(R × S)
+
+But Codd included them because they're common and conceptually important.
+
+---
+
+### 1.6.1 Select (σ) - Filtering Tuples
+
+#### Motivation and Intuition
+
+The select operator addresses one of the most ubiquitous database operations: **filtering**. Given a large collection of data, we need to identify and extract only the subset that meets specific criteria.
+
+**Real-World Analogies**:
+- **Coffee filter**: Liquid passes through; grounds are blocked. Similarly, select lets tuples matching a condition pass through while blocking non-matching ones.
+- **Search**: Finding all emails from a specific sender, all photos taken in 2023, all products priced under $50—all involve filtering.
+- **Admission criteria**: A university might select applicants where GPA ≥ 3.5 AND SAT ≥ 1400.
+- **Quality control**: A factory might select manufactured parts where tolerances are within specified ranges.
+
+**Why This Operation Exists**: In early database systems and file-based approaches, programmers wrote explicit loops to filter data:
+
+```python
+results = []
+for record in all_records:
+    if meets_condition(record):
+        results.append(record)
+```
+
+This was:
+- **Error-prone**: Easy to write bugs (off-by-one errors, incorrect conditions)
+- **Verbose**: Every query required writing and maintaining loop code
+- **Tightly coupled**: Code depended on physical storage details (file format, record layout)
+- **Hard to optimize**: The database couldn't optimize—it just executed the programmer's loop
+
+The select operator **abstracts this pattern**: you specify *what* condition to filter by, not *how* to iterate and check. The database chooses the implementation strategy (table scan, index scan, bitmap scan, etc.) based on available indexes and statistics.
+
+#### Formal Definition
 
 **Syntax**: σ<sub>predicate</sub>(R)
 
-**Semantics**: Returns all tuples in R for which the predicate evaluates to true.
+Where:
+- σ is the select operator (lowercase Greek letter sigma)
+- predicate is a boolean expression over R's attributes
+- R is a relation
 
-**Example**: Find all artists from the USA.
+**Semantics**: Given a relation R and a predicate P (a boolean expression over R's attributes), σ<sub>P</sub>(R) returns a new relation containing exactly those tuples t ∈ R for which P(t) evaluates to true.
 
+**Mathematically (using set-builder notation)**:
+```
+σ<sub>P</sub>(R) = {t | t ∈ R ∧ P(t) = true}
+```
+
+This reads: "The set of all tuples t such that t is in R AND P(t) is true."
+
+**Output Schema**: The output relation has the **same schema** as R. We're filtering rows (tuples), not changing the structure (attributes). The relation name, attribute names, and attribute domains are identical to the input.
+
+**Cardinality**: The output has cardinality 0 ≤ |σ<sub>P</sub>(R)| ≤ |R|. At minimum, zero tuples match (empty result). At maximum, all tuples match (result equals input).
+
+#### Properties of the Select Operator
+
+Understanding these algebraic properties is crucial for query optimization. They enable the query optimizer to rewrite expressions into more efficient forms.
+
+**Property 1: Idempotence**
+
+Applying the same filter twice is equivalent to applying it once:
+
+```
+σ<sub>P</sub>(σ<sub>P</sub>(R)) = σ<sub>P</sub>(R)
+```
+
+**Example**:
+```
+σ<sub>country='USA'</sub>(σ<sub>country='USA'</sub>(Artist)) = σ<sub>country='USA'</sub>(Artist)
+```
+
+**Intuition**: If you filter for USA artists, then filter again for USA artists, you get the same result as filtering once. The second filter is redundant.
+
+**Optimization Implication**: The optimizer can eliminate redundant filters.
+
+**Property 2: Commutativity**
+
+The order of independent (non-overlapping) filters doesn't matter:
+
+```
+σ<sub>P</sub>(σ<sub>Q</sub>(R)) = σ<sub>Q</sub>(σ<sub>P</sub>(R))
+```
+
+**Example**:
+```
+σ<sub>year=1992</sub>(σ<sub>country='USA'</sub>(Artist)) = σ<sub>country='USA'</sub>(σ<sub>year=1992</sub>(Artist))
+```
+
+Both expressions produce the same result: artists from USA formed in 1992.
+
+**Intuition**: Filtering by country then year gives the same result as filtering by year then country.
+
+**Optimization Implication**: The optimizer can reorder filters based on **selectivity** (which filter eliminates more rows). Applying the most selective filter first minimizes intermediate result size.
+
+If `σ<sub>country='USA'</sub>` eliminates 90% of rows and `σ<sub>year=1992</sub>` eliminates 99% of rows, filtering by year first is more efficient:
+
+```
+σ<sub>country='USA'</sub>(σ<sub>year=1992</sub>(Artist))  # Better: year filter first
+```
+
+**Property 3: Cascading (Combines with AND)**
+
+Successive filters can be combined into a single filter with a compound condition:
+
+```
+σ<sub>P</sub>(σ<sub>Q</sub>(R)) = σ<sub>P ∧ Q</sub>(R)
+```
+
+**Example**:
+```
+σ<sub>year=1992</sub>(σ<sub>country='USA'</sub>(Artist)) = σ<sub>country='USA' ∧ year=1992</sub>(Artist)
+```
+
+**Intuition**: Filtering for USA then filtering for 1992 is equivalent to filtering for "USA AND 1992" in one operation.
+
+**Optimization Implication**: Combining filters reduces overhead (fewer intermediate results, one pass instead of two).
+
+**Property 4: Splitting with OR**
+
+A filter with OR can be split into union of separate filters:
+
+```
+σ<sub>P ∨ Q</sub>(R) = σ<sub>P</sub>(R) ∪ σ<sub>Q</sub>(R)
+```
+
+**Example**:
+```
+σ<sub>country='USA' ∨ country='UK'</sub>(Artist) = σ<sub>country='USA'</sub>(Artist) ∪ σ<sub>country='UK'</sub>(Artist)
+```
+
+**Optimization Implication**: This might enable using multiple indexes in parallel (index scan on country='USA' in parallel with index scan on country='UK', then union the results).
+
+#### Predicates: Building Filter Conditions
+
+Predicates are boolean expressions built from comparison and logical operators.
+
+**Comparison Operators** (compare attribute values):
+- **=** (equals): `country = 'USA'`
+- **≠** or **<>** (not equals): `country ≠ 'USA'`
+- **<** (less than): `year < 2000`
+- **≤** or **<=** (less than or equal): `year ≤ 1999`
+- **>** (greater than): `year > 1990`
+- **≥** or **>=** (greater than or equal): `year ≥ 1990`
+
+**Logical Operators** (combine conditions):
+- **∧** or **AND** (logical conjunction): both conditions must be true
+- **∨** or **OR** (logical disjunction): at least one condition must be true
+- **¬** or **NOT** (logical negation): inverts the condition
+
+**Operator Precedence** (from highest to lowest):
+1. NOT (¬)
+2. AND (∧)
+3. OR (∨)
+
+Use parentheses to clarify or override precedence.
+
+**Examples of Predicates**:
+
+**Simple equality**:
+```
 σ<sub>country='USA'</sub>(Artist)
+```
+Finds artists where country equals 'USA'.
 
-**SQL equivalent**:
+**Simple comparison**:
+```
+σ<sub>year≥1990</sub>(Artist)
+```
+Finds artists formed in 1990 or later.
+
+**Compound with AND**:
+```
+σ<sub>country='USA' ∧ year≥1992</sub>(Artist)
+```
+Finds USA artists formed in 1992 or later. **Both** conditions must be true.
+
+**Compound with OR**:
+```
+σ<sub>country='USA' ∨ country='UK'</sub>(Artist)
+```
+Finds artists from USA **or** UK. **At least one** condition must be true.
+
+**Negation**:
+```
+σ<sub>¬(country='USA')</sub>(Artist)
+```
+Finds artists **not** from USA.
+
+**Range condition**:
+```
+σ<sub>year≥1990 ∧ year≤1999</sub>(Artist)
+```
+Finds artists formed in the 1990s (1990-1999 inclusive).
+
+**Complex with parentheses**:
+```
+σ<sub>country='USA' ∧ (year=1991 ∨ year=1992)</sub>(Artist)
+```
+Finds USA artists formed in 1991 or 1992. The parentheses ensure OR is evaluated first.
+
+Without parentheses, this would be ambiguous or wrong:
+```
+σ<sub>country='USA' ∧ year=1991 ∨ year=1992</sub>(Artist)
+```
+Due to precedence (AND before OR), this is interpreted as:
+```
+σ<sub>(country='USA' ∧ year=1991) ∨ year=1992</sub>(Artist)
+```
+This finds (USA artists from 1991) OR (any artist from 1992), which is probably not what you want!
+
+#### Step-by-Step Example Walkthrough
+
+Let's execute a select operation step-by-step to build intuition.
+
+**Given relation (Artist)**:
+```
++---------------+------+---------+
+| name          | year | country |
++---------------+------+---------+
+| Wu-Tang Clan  | 1992 | USA     |
+| GZA           | 1991 | USA     |
+| Notorious BIG | 1992 | USA     |
+| Oasis         | 1991 | UK      |
+| Radiohead     | 1985 | UK      |
+| Nas           | 1991 | USA     |
++---------------+------+---------+
+```
+Cardinality: 6 tuples
+
+**Query**: σ<sub>country='USA' ∧ year≥1992</sub>(Artist)
+
+**Predicate**: country='USA' AND year≥1992
+
+**Step 1: Evaluate predicate for each tuple**
+
+**Tuple 1**: ('Wu-Tang Clan', 1992, 'USA')
+- country = 'USA'? **YES** (TRUE)
+- year ≥ 1992? **YES** (1992 ≥ 1992 is TRUE)
+- TRUE AND TRUE = **TRUE**
+- **Action**: Include in result
+
+**Tuple 2**: ('GZA', 1991, 'USA')
+- country = 'USA'? **YES** (TRUE)
+- year ≥ 1992? **NO** (1991 < 1992, so FALSE)
+- TRUE AND FALSE = **FALSE**
+- **Action**: Exclude from result
+
+**Tuple 3**: ('Notorious BIG', 1992, 'USA')
+- country = 'USA'? **YES** (TRUE)
+- year ≥ 1992? **YES** (1992 ≥ 1992 is TRUE)
+- TRUE AND TRUE = **TRUE**
+- **Action**: Include in result
+
+**Tuple 4**: ('Oasis', 1991, 'UK')
+- country = 'USA'? **NO** (FALSE)
+- year ≥ 1992? **NO** (FALSE)
+- FALSE AND FALSE = **FALSE**
+- **Action**: Exclude from result
+
+**Tuple 5**: ('Radiohead', 1985, 'UK')
+- country = 'USA'? **NO** (FALSE)
+- year ≥ 1992? **NO** (1985 < 1992, so FALSE)
+- FALSE AND FALSE = **FALSE**
+- **Action**: Exclude from result
+
+**Tuple 6**: ('Nas', 1991, 'USA')
+- country = 'USA'? **YES** (TRUE)
+- year ≥ 1992? **NO** (1991 < 1992, so FALSE)
+- TRUE AND FALSE = **FALSE**
+- **Action**: Exclude from result
+
+**Step 2: Collect tuples where predicate evaluated to TRUE**
+
+**Result**:
+```
++---------------+------+---------+
+| name          | year | country |
++---------------+------+---------+
+| Wu-Tang Clan  | 1992 | USA     |
+| Notorious BIG | 1992 | USA     |
++---------------+------+---------+
+```
+
+**Output Characteristics**:
+- **Schema**: Identical to input (name, year, country)
+- **Cardinality**: 2 tuples (out of 6 original)
+- **Selectivity**: 2/6 = 33.3% (the filter retained about one-third of rows)
+
+This is relatively high selectivity (many rows eliminated), which is good for performance.
+
+#### Translation to SQL
+
+The select operator corresponds directly to SQL's WHERE clause:
+
+**Relational Algebra**:
+```
+σ<sub>country='USA'</sub>(Artist)
+```
+
+**SQL**:
 ```sql
 SELECT * FROM Artist WHERE country = 'USA';
 ```
 
-**Detailed example with data**:
+The `SELECT *` means "retrieve all attributes" (no projection). The `WHERE` clause is the predicate.
 
-Input (Artist):
+**More Complex Example**:
+
+**Relational Algebra**:
 ```
-+---------------+------+---------+
-| name          | year | country |
-+---------------+------+---------+
-| Wu-Tang Clan  | 1992 | USA     |
-| GZA           | 1991 | USA     |
-| Oasis         | 1991 | UK      |
-+---------------+------+---------+
+σ<sub>country='USA' ∧ year≥1990 ∧ year<2000</sub>(Artist)
 ```
 
-Output:
-```
-+---------------+------+---------+
-| name          | year | country |
-+---------------+------+---------+
-| Wu-Tang Clan  | 1992 | USA     |
-| GZA           | 1991 | USA     |
-+---------------+------+---------+
+**SQL**:
+```sql
+SELECT * FROM Artist 
+WHERE country = 'USA' 
+  AND year >= 1990 
+  AND year < 2000;
 ```
 
-Predicates can be compound:
+**With OR**:
 
-σ<sub>country='USA' ∧ year≥1992</sub>(Artist)
+**Relational Algebra**:
+```
+σ<sub>(country='USA' ∨ country='UK') ∧ year≥1990</sub>(Artist)
+```
 
-This returns only Wu-Tang Clan.
+**SQL**:
+```sql
+SELECT * FROM Artist 
+WHERE (country = 'USA' OR country = 'UK') 
+  AND year >= 1990;
+```
+
+Note the parentheses in both notations to ensure correct evaluation order.
+
+#### Edge Cases and Special Scenarios
+
+**Edge Case 1: Empty Result Set**
+
+If no tuples satisfy the predicate, the result is an **empty relation** with the same schema.
+
+```
+σ<sub>country='Antarctica'</sub>(Artist) → ∅ (empty set)
+```
+
+The result is still a relation with schema (name, year, country); it just contains zero tuples.
+
+**In SQL**:
+```sql
+SELECT * FROM Artist WHERE country = 'Antarctica';
+-- Returns 0 rows (but still has 3 columns)
+```
+
+**Edge Case 2: All Tuples Match**
+
+If all tuples satisfy the predicate, the result is identical to the input.
+
+```
+σ<sub>year≥1900</sub>(Artist) → Artist (assuming no artists formed before 1900)
+```
+
+**Edge Case 3: Tautology (Always True)**
+
+If the predicate is a tautology (always true), all tuples are included:
+
+```
+σ<sub>country='USA' ∨ ¬(country='USA')</sub>(Artist) → Artist
+```
+
+This is equivalent to σ<sub>TRUE</sub>(Artist) = Artist.
+
+**Edge Case 4: Contradiction (Always False)**
+
+If the predicate is a contradiction (always false), the result is empty:
+
+```
+σ<sub>country='USA' ∧ ¬(country='USA')</sub>(Artist) → ∅
+```
+
+This is equivalent to σ<sub>FALSE</sub>(Artist) = ∅.
+
+**Edge Case 5: NULL Values (SQL Extension)**
+
+In the pure relational model, attributes don't have NULL values. In SQL (which extends the model), NULLs introduce **three-valued logic**:
+
+- TRUE
+- FALSE
+- UNKNOWN (when NULL is involved)
+
+**Example**:
+```sql
+SELECT * FROM Artist WHERE year > 1990;
+```
+
+If an artist has year = NULL:
+- NULL > 1990 evaluates to UNKNOWN (not TRUE, not FALSE)
+- WHERE clause only includes rows where the condition is TRUE
+- So NULL rows are **excluded**
+
+This can be counterintuitive. To include NULLs explicitly:
+```sql
+SELECT * FROM Artist WHERE year > 1990 OR year IS NULL;
+```
+
+#### Performance Implications
+
+The select operator's performance varies dramatically based on implementation strategy:
+
+**Strategy 1: Table Scan (No Index)**
+
+**Method**: Read every tuple, evaluate the predicate, include if true.
+
+**Cost**: O(n) where n = number of tuples
+- Must read all n tuples from disk
+- Must evaluate predicate n times
+
+**Example**: For 1 million artists:
+- Read 1 million tuples
+- Evaluate predicate 1 million times
+- Return matching tuples (say, 10,000)
+
+**Time**: If reading 100 MB/s and each tuple is 100 bytes:
+- 1 million × 100 bytes = 100 MB
+- 100 MB ÷ 100 MB/s = 1 second
+
+**Strategy 2: Index Scan (With Appropriate Index)**
+
+**Method**: Use an index (B-tree, hash) to find matching tuples directly.
+
+**Cost**: O(log n + m) where m = number of matching tuples
+- Log n to navigate the index
+- m to retrieve matching tuples
+
+**Example**: For 1 million artists with index on country:
+- B-tree height ≈ log₁₀₀₀(1,000,000) ≈ 2 levels
+- Find 'USA' entry in index: 2 disk seeks
+- Retrieve 10,000 matching tuples: 10,000 reads
+
+**Time**: If each disk seek is 10ms and reading 100 MB/s:
+- 2 × 10ms = 20ms (index navigation)
+- 10,000 × 100 bytes = 1 MB
+- 1 MB ÷ 100 MB/s = 10ms (reading data)
+- Total: 30ms
+
+**Speedup**: 1000ms ÷ 30ms ≈ **33x faster**
+
+**Strategy 3: Index-Only Scan (Covering Index)**
+
+If the index contains all needed attributes (a **covering index**), we don't need to access the table at all.
+
+**Example**:
+```
+σ<sub>country='USA'</sub>(π<sub>name,country</sub>(Artist))
+```
+
+If we have an index on (country, name), the index itself contains all needed data.
+
+**Cost**: O(log n + m), but the 'm' step reads from the index (faster) rather than the table.
+
+**This is even faster**: Maybe **100x-1000x** faster than table scan for selective queries.
+
+**Takeaway**: Indexes dramatically affect select performance. Understanding this helps with:
+- Database design (what indexes to create)
+- Query writing (how to write queries that use indexes)
+- Performance tuning (diagnosing slow queries)
+
+#### Common Pitfalls and Mistakes
+
+**Pitfall 1: Confusing AND vs. OR**
+
+**Wrong**: Find artists from both USA and UK
+```
+σ<sub>country='USA' ∧ country='UK'</sub>(Artist)  # WRONG! Always empty
+```
+No artist is from both USA and UK simultaneously (country is a single value).
+
+**Correct**: Find artists from USA or UK
+```
+σ<sub>country='USA' ∨ country='UK'</sub>(Artist)  # Correct
+```
+
+**Pitfall 2: Parentheses Matter with Mixed AND/OR**
+
+**Ambiguous**:
+```
+σ<sub>country='USA' ∨ country='UK' ∧ year=1992</sub>(Artist)
+```
+
+Due to precedence (AND before OR), this means:
+```
+σ<sub>country='USA' ∨ (country='UK' ∧ year=1992)</sub>(Artist)
+```
+"USA artists (any year) OR UK artists from 1992"
+
+**Probably intended**:
+```
+σ<sub>(country='USA' ∨ country='UK') ∧ year=1992</sub>(Artist)
+```
+"(USA or UK) artists from 1992"
+
+**Rule**: Always use parentheses with mixed AND/OR to make intent clear.
+
+**Pitfall 3: Negation and De Morgan's Laws**
+
+**Problem**: Find artists NOT from USA or UK
+
+**Wrong**:
+```
+σ<sub>¬(country='USA') ∨ ¬(country='UK')</sub>(Artist)
+```
+This finds artists where (NOT USA) OR (NOT UK). If an artist is from USA, they satisfy "NOT UK", so they're included! This matches everyone except artists that are somehow both USA and UK (impossible).
+
+**Correct (using De Morgan's law)**:
+```
+σ<sub>¬(country='USA' ∨ country='UK')</sub>(Artist)
+```
+or equivalently:
+```
+σ<sub>¬(country='USA') ∧ ¬(country='UK')</sub>(Artist)
+```
+
+**De Morgan's Laws** (very important):
+- ¬(A ∨ B) = ¬A ∧ ¬B
+- ¬(A ∧ B) = ¬A ∨ ¬B
+
+**Pitfall 4: Floating-Point Comparisons**
+
+When filtering on floating-point attributes, exact equality can fail due to rounding:
+
+```sql
+-- May not work as expected
+SELECT * FROM Product WHERE price = 19.99;
+```
+
+If the stored value is 19.990000000001 due to floating-point representation, it won't match.
+
+**Better**: Use range comparisons:
+```sql
+SELECT * FROM Product WHERE price >= 19.98 AND price <= 20.00;
+```
+
+Or use DECIMAL/NUMERIC types for monetary values instead of FLOAT.
+
+#### Relationship to Other Concepts
+
+**Select vs. Filter (Programming)**:
+
+In functional programming and many languages, "filter" is the equivalent concept:
+
+```python
+# Python
+usa_artists = filter(lambda artist: artist['country'] == 'USA', artists)
+
+# JavaScript
+const usaArtists = artists.filter(artist => artist.country === 'USA');
+
+# SQL
+SELECT * FROM Artist WHERE country = 'USA';
+```
+
+All three express the same operation: keep elements matching a condition.
+
+**Select vs. Restriction**:
+
+Some database textbooks call the select operator **"restriction"** because it restricts the relation to a subset of its tuples. Both terms are correct:
+- **Select** (Codd's original term, most common)
+- **Restriction** (emphasizes that output ⊆ input)
+
+**Select in Set Theory**:
+
+The select operator is precisely **set-builder notation** from mathematics:
+
+```
+σ<sub>P</sub>(R) = {t | t ∈ R ∧ P(t)}
+```
+
+Read: "The set of all t such that t is in R and P(t) is true."
+
+This is standard mathematical notation for defining sets by a property.
+
+**Why This Matters**: The mathematical foundation enables formal reasoning. We can prove properties about queries, show that two queries are equivalent, and systematically optimize query execution—all because relational algebra has a rigorous mathematical basis.
 
 ### 1.6.2 Projection (π)
 
